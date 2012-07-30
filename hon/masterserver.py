@@ -11,9 +11,12 @@ except:
     from urllib2 import urlopen
     from urllib import urlencode
 
-USER_AGENT = "S2 Games/Heroes of Newerth/2.3.5.1/lac/x86-biarch"
-MASTERSERVER = 'masterserver.hon.s2games.com'
-
+#This needs to be changed too, am I right? - USER_AGENT = "S2 Games/Heroes of Newerth/2.3.5.1/lac/x86-biarch"
+#edited my Auph - MASTERSERVER = 'masterserver.garena.s2games.com'
+#Auph comments:
+#The method of authentication would need to be changed in order for this to work in SEA, am I right? 
+#get_garena_token, etc. How do I integrate this into your code?
+#VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV
 def auth(login,password=None,pass_hash=None):
     if password is None and pass_hash is None:
         return None
