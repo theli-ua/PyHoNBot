@@ -1,3 +1,7 @@
 *.pyc
 __pycache__
 *.db
+default.py
+.idea
+modules/_*
+defaultdb

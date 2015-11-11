@@ -15,7 +15,7 @@ import time
 from hon.honutils import normalize_nick
 from utils.dep import dep
 
-home = os.getcwd() 
+home = os.getcwd()
 
 
 class Store:pass
@@ -29,8 +29,9 @@ class Bot( asynchat.async_chat ):
     def err(self, msg):
         caller = inspect.stack()
         print("Error: {0} ({1}:{2} - {3})".format(msg, caller[1][1], caller[1][2], time.strftime('%X')))
-    def __init__( self,config ):
+    def __init__( self,config, post_to_twitch_callback):
         asynchat.async_chat.__init__( self )
+        self.post_to_twitch_callback = post_to_twitch_callback
         self.verbose = True
         self.config = config
         self.nick = self.config.nick
@@ -53,22 +54,26 @@ class Bot( asynchat.async_chat ):
         #self.sleep = time.time() - 10
         #self.send_threshold = 1
 
-        self.ac_in_buffer_size = 2
+        #self.ac_in_buffer_size = 2
         #self.ac_out_buffer_size = 2
         self.connection_timeout_threshold = 60
         self.connection_timeout = time.time() + 5
+
+    def post_to_twitch(self, msg):
+        self.post_to_twitch_callback(msg)
+
     def readable(self):
         if time.time() - self.connection_timeout >= self.connection_timeout_threshold:
             self.close()
             return False
         return True
-        
+
 
     def write_packet(self,packet_id,*args):
         data = packets.pack(packet_id,*args)
         self.write(struct.pack('<H',len(data)))
         self.write(data)
- 
+
     def write( self, data ):
         #self.writelock.acquire()
         #to_sleep =  time.time() - self.sleep - self.send_threshold
@@ -77,7 +82,7 @@ class Bot( asynchat.async_chat ):
         self.push(data)
         #self.sleep = time.time()
         #self.writelock.release()
- 
+
     #def handle_close( self ):
         #print 'disconnected'
 
@@ -90,7 +95,7 @@ class Bot( asynchat.async_chat ):
 
     def collect_incoming_data( self, data ):
         self.buffer += data
- 
+
     def found_terminator( self ):
         if self.got_len:
             self.set_terminator(2)
@@ -159,48 +164,51 @@ class Bot( asynchat.async_chat ):
                 except:pass
         return auth_data
 
+    def loop(self):
+        asyncore.loop(timeout=1, count=1)
+
     def run(self):
         auth_data = self.auth()
         if auth_data is False:
             return
         self.create_socket( socket.AF_INET, socket.SOCK_STREAM )
         self.connect( ( auth_data['chat_url'], int(auth_data['chat_port']) ) )
-        asyncore.loop()
-    def setup(self): 
+
+    def setup(self):
         masterserver.set_region(self.config.region)
         self.variables = {}
 
         filenames = []
-        if not hasattr(self.config, 'enable'): 
-            for fn in os.listdir(os.path.join(home, 'modules')): 
-                if fn.endswith('.py') and not fn.startswith('_'): 
+        if not hasattr(self.config, 'enable'):
+            for fn in os.listdir(os.path.join(home, 'modules')):
+                if fn.endswith('.py') and not fn.startswith('_'):
                     filenames.append(os.path.join(home, 'modules', fn))
-        else: 
-            for fn in self.config.enable: 
+        else:
+            for fn in self.config.enable:
                 filenames.append(os.path.join(home, 'modules', fn + '.py'))
 
-        if hasattr(self.config, 'extra'): 
-            for fn in self.config.extra: 
-                if os.path.isfile(fn): 
+        if hasattr(self.config, 'extra'):
+            for fn in self.config.extra:
+                if os.path.isfile(fn):
                     filenames.append(fn)
-                elif os.path.isdir(fn): 
-                    for n in os.listdir(fn): 
-                        if n.endswith('.py') and not n.startswith('_'): 
+                elif os.path.isdir(fn):
+                    for n in os.listdir(fn):
+                        if n.endswith('.py') and not n.startswith('_'):
                             filenames.append(os.path.join(fn, n))
 
         modules = []
         excluded_modules = getattr(self.config, 'exclude', [])
         deps = {}
         imp_modules = {}
-        for filename in filenames: 
+        for filename in filenames:
             name = os.path.basename(filename)[:-3]
             if name in excluded_modules: continue
-            # if name in sys.modules: 
+            # if name in sys.modules:
             #     del sys.modules[name]
             try: module = imp.load_source(name, filename)
-            except Exception, e: 
+            except Exception, e:
                 print >> sys.stderr, "Error loading %s: %s (in bot.py)" % (name, e)
-            else: 
+            else:
                 if hasattr(module, 'depend'):
                     deps[name] = module.depend
                 else:
@@ -213,126 +221,126 @@ class Bot( asynchat.async_chat ):
         for s in deps:
             for name in s:
                 module = imp_modules[name]
-                if hasattr(module, 'setup'): 
+                if hasattr(module, 'setup'):
                     module.setup(self)
                 self.register(vars(module))
                 modules.append(name)
 
 
-        if modules: 
+        if modules:
             print 'Registered modules:', ', '.join(modules)
         else: print >> sys.stderr, "Warning: Couldn't find any modules"
 
         self.bind_commands()
-    def error(self, origin): 
-        try: 
+    def error(self, origin):
+        try:
             import traceback
             trace = traceback.format_exc()
             print trace
             lines = list(reversed(trace.splitlines()))
 
             report = [lines[0].strip()]
-            for line in lines: 
+            for line in lines:
                 line = line.strip()
-                if line.startswith('File "/'): 
+                if line.startswith('File "/'):
                     report.append(line[0].lower() + line[1:])
                     break
             else: report.append('source unknown')
             print(report[0] + ' (' + report[1] + ')')
         except: print("Got an error.")
 
-    def register(self, variables): 
+    def register(self, variables):
         # This is used by reload.py, hence it being methodised
-        for name, obj in variables.iteritems(): 
-            if hasattr(obj, 'commands') or hasattr(obj, 'rule') or hasattr(obj,'event'): 
+        for name, obj in variables.iteritems():
+            if hasattr(obj, 'commands') or hasattr(obj, 'rule') or hasattr(obj,'event'):
                 self.variables[name] = obj
 
-    def bind_commands(self): 
+    def bind_commands(self):
         self.commands = {'high': {}, 'medium': {}, 'low': {}}
-        def bind(self, priority, regexp, func): 
+        def bind(self, priority, regexp, func):
             #print priority, regexp.pattern.encode('utf-8'), func
             # register documentation
-            if not hasattr(func, 'name'): 
+            if not hasattr(func, 'name'):
                 func.name = func.__name__
-            if func.__doc__: 
-                if hasattr(func, 'example'): 
+            if func.__doc__:
+                if hasattr(func, 'example'):
                     example = func.example
                     example = example.replace('$nickname', self.nick)
                 else: example = None
                 self.doc[func.name] = (func.__doc__, example)
             self.commands[priority].setdefault(regexp, []).append(func)
 
-        def sub(pattern, self=self): 
+        def sub(pattern, self=self):
             # These replacements have significant order
             pattern = pattern.replace('$nickname', re.escape(self.nick))
             return pattern.replace('$nick', r'%s[,:] +' % re.escape(self.nick))
 
-        for name, func in self.variables.iteritems(): 
+        for name, func in self.variables.iteritems():
             #print name, func
-            if not hasattr(func, 'priority'): 
+            if not hasattr(func, 'priority'):
                 func.priority = 'medium'
 
-            if not hasattr(func, 'thread'): 
+            if not hasattr(func, 'thread'):
                 func.thread = True
 
-            if not hasattr(func, 'event'): 
+            if not hasattr(func, 'event'):
                 func.event = [packets.ID.HON_SC_WHISPER,packets.ID.HON_SC_PM,packets.ID.HON_SC_CHANNEL_MSG]
 
-            if hasattr(func, 'rule'): 
-                if isinstance(func.rule, str): 
+            if hasattr(func, 'rule'):
+                if isinstance(func.rule, str):
                     pattern = sub(func.rule)
                     regexp = re.compile(pattern)
                     bind(self, func.priority, regexp, func)
 
-                if isinstance(func.rule, tuple): 
+                if isinstance(func.rule, tuple):
                     # 1) e.g. ('$nick', '(.*)')
-                    if len(func.rule) == 2 and isinstance(func.rule[0], str): 
+                    if len(func.rule) == 2 and isinstance(func.rule[0], str):
                         prefix, pattern = func.rule
                         prefix = sub(prefix)
                         regexp = re.compile(prefix + pattern)
                         bind(self, func.priority, regexp, func)
 
                     # 2) e.g. (['p', 'q'], '(.*)')
-                    elif len(func.rule) == 2 and isinstance(func.rule[0], list): 
+                    elif len(func.rule) == 2 and isinstance(func.rule[0], list):
                         prefix = self.config.prefix
                         commands, pattern = func.rule
-                        for command in commands: 
+                        for command in commands:
                             command = r'(%s)\b(?: +(?:%s))?' % (command, pattern)
                             regexp = re.compile(prefix + command)
                             bind(self, func.priority, regexp, func)
 
                     # 3) e.g. ('$nick', ['p', 'q'], '(.*)')
-                    elif len(func.rule) == 3: 
+                    elif len(func.rule) == 3:
                         prefix, commands, pattern = func.rule
                         prefix = sub(prefix)
-                        for command in commands: 
+                        for command in commands:
                             command = r'(%s) +' % command
                             regexp = re.compile(prefix + command + pattern)
                             bind(self, func.priority, regexp, func)
 
-            if hasattr(func, 'commands'): 
-                for command in func.commands: 
+            if hasattr(func, 'commands'):
+                for command in func.commands:
                     template = r'^%s(%s)(?: +(.*))?$'
                     pattern = template % (self.config.prefix, command)
                     regexp = re.compile(pattern)
-                    bind(self, func.priority, regexp, func)    
+                    bind(self, func.priority, regexp, func)
 
             if not hasattr(func,'commands') and not hasattr(func,'rule'):
                 bind(self,func.priority,None,func)
 
-    def wrapped(self, origin, input, data, match): 
-        class PhennyWrapper(object): 
-            def __init__(self, phenny): 
+    def wrapped(self, origin, input, data, match):
+        class PhennyWrapper(object):
+            def __init__(self, phenny):
                 self.bot = phenny
 
             def send_msg(self,input,origin):
                 pass
-            def __getattr__(self, attr): 
+            def __getattr__(self, attr):
                 #sender = origin.sender or text
-                #if attr == 'reply': 
-                    #return (lambda msg: 
+                #if attr == 'reply':
+                    #return (lambda msg:
                         #self.bot.msg(sender, origin.nick + ': ' + msg))
-                #elif attr == 'say': 
+                #elif attr == 'say':
                     #return lambda msg: self.bot.msg(sender, msg)
 
 
@@ -376,7 +384,7 @@ class Bot( asynchat.async_chat ):
 
         return PhennyWrapper(self)
 
-    def call(self, func, origin, phenny, *input): 
+    def call(self, func, origin, phenny, *input):
         try:
             if hasattr(self.config, 'bad_commands') and \
                 hasattr(func, 'commands') and \
@@ -394,9 +402,9 @@ class Bot( asynchat.async_chat ):
         except Exception, e:
             self.error(origin)
 
-    def input(self, origin, text, data, match): 
-        class CommandInput(unicode): 
-            def __new__(cls, text, origin, data, match): 
+    def input(self, origin, text, data, match):
+        class CommandInput(unicode):
+            def __new__(cls, text, origin, data, match):
                 s = unicode.__new__(cls, text)
                 s.origin = origin
                 #s.sender = origin.sender
@@ -441,37 +449,42 @@ class Bot( asynchat.async_chat ):
         origin,data = packets.parse_packet(data)
         packet_id = origin[0]
 
-        for priority in ('high', 'medium', 'low'): 
-            items = self.commands[priority].items()
-            for regexp, funcs in items: 
-                for func in funcs: 
-                    if packet_id not in func.event: continue
-                    if regexp is None:
-                        if func.thread: 
-                            targs = (func, list(origin), self,list(origin), data)
-                            t = threading.Thread(target=self.call, args=targs)
-                            t.start()
-                        else: self.call(func, list(origin), self, list(origin),data)
-                    elif isinstance(data,unicode):
-                        text = data
-                        match = regexp.match(text)
-                        if match:
-                            input = self.input(list(origin), text, data, match)
-                            if input.nick.lower() in self.config.ignore:
-                                continue
-                            phenny = self.wrapped(list(origin), input, text, match)
-                            t = time.time()
-                            if input.admin or input.nick not in self.cooldowns or\
-                                    (input.nick in self.cooldowns \
-                                    and \
-                                    t - self.cooldowns[input.nick]\
-                                    >= self.config.cooldown):
-                                self.cooldowns[input.nick] = t
-                                if func.thread: 
-                                    targs = (func, list(origin), phenny, input)
-                                    t = threading.Thread(target=self.call, args=targs)
-                                    t.start()
-                                else: self.call(func, list(origin), phenny, input)
+        source = normalize_nick(origin[1]).lower() if origin[1] != None and isinstance(origin[1], unicode) else None
+        owner = self.config.owner.lower()
+        if source == owner and isinstance(data, unicode) and len(data) > 0 and data[0] not in ['!', '.']:
+            self.post_to_twitch(data)
+        else:
+            for priority in ('high', 'medium', 'low'):
+                items = self.commands[priority].items()
+                for regexp, funcs in items:
+                    for func in funcs:
+                        if packet_id not in func.event: continue
+                        if regexp is None:
+                            if func.thread:
+                                targs = (func, list(origin), self,list(origin), data)
+                                t = threading.Thread(target=self.call, args=targs)
+                                t.start()
+                            else: self.call(func, list(origin), self, list(origin),data)
+                        elif isinstance(data,unicode):
+                            text = data
+                            match = regexp.match(text)
+                            if match:
+                                input = self.input(list(origin), text, data, match)
+                                if input.nick.lower() in self.config.ignore:
+                                    continue
+                                phenny = self.wrapped(list(origin), input, text, match)
+                                t = time.time()
+                                if input.admin or input.nick not in self.cooldowns or\
+                                        (input.nick in self.cooldowns \
+                                        and \
+                                        t - self.cooldowns[input.nick]\
+                                        >= self.config.cooldown):
+                                    self.cooldowns[input.nick] = t
+                                    if func.thread:
+                                        targs = (func, list(origin), phenny, input)
+                                        t = threading.Thread(target=self.call, args=targs)
+                                        t.start()
+                                    else: self.call(func, list(origin), phenny, input)
     def noauth(self, input):
             self.write_packet(packets.ID.HON_SC_WHISPER, input.nick, 'You do not have access to this command.')
             return False
